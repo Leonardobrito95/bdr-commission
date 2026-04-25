@@ -1,12 +1,26 @@
 # Canaã Performance
 
-Sistema web para registro de comissões da equipes de vendas e retenção(comercial), e terceiras de campo(instalação).
+Sistema web para centralizar o registro e a auditoria de comissões de múltiplas equipes: comercial (vendas), BDR (retenção), e terceiras de campo (instalação e manutenção).
 
 ## O problema que isso resolve
 
-O time BDR controlava comissões em planilhas. Sem validação contra o ERP, contratos errados eram comissionados, valores divergiam e o fechamento do mês virava um trabalho à parte: horas comparando planilha com sistema.
+Cada equipe controlava comissões de um jeito diferente: planilha, caderno, mensagem no WhatsApp. Sem validação contra o ERP, contratos errados eram comissionados, valores divergiam e o fechamento do mês era um trabalho paralelo de horas conferindo manualmente o que o sistema deveria entregar automaticamente.
 
-Este projeto conecta direto ao ERP IXC via MariaDB (somente leitura), valida o contrato em tempo real e registra a comissão no banco próprio. O consultor informa o ID do contrato durante o próprio atendimento. O fechamento mensal deixou de ser um problema.
+Além disso, o time comercial não tinha como acompanhar o status das próprias vendas. Uma venda fechada entrava num limbo entre o CRM e o financeiro, e o vendedor só descobria que havia problema quando o pagamento não caía.
+
+## O que o sistema faz
+
+Conecta ao ERP IXC via MariaDB (somente leitura) para validar contratos em tempo real. Cada equipe registra suas comissões direto no sistema, que calcula os valores automaticamente conforme as regras de negócio de cada modalidade.
+
+Para o time comercial, há um painel de acompanhamento que mostra a evolução do status de cada venda — do registro até a liberação para pagamento. O fechamento do mês deixou de exigir reconciliação manual.
+
+## Equipes atendidas
+
+| Equipe | Tipo de comissão |
+|---|---|
+| Comercial (vendas) | Por contrato fechado, com rastreamento de status até liberação |
+| BDR (retenção) | Upgrade, Downgrade e Refidelização |
+| Terceiras de campo | Por instalação, manutenção e serviços técnicos |
 
 ## Stack
 
@@ -17,11 +31,9 @@ Este projeto conecta direto ao ERP IXC via MariaDB (somente leitura), valida o c
 | ORM | Prisma (migrations automáticas) |
 | Banco RW | PostgreSQL 16 |
 | Banco RO | MariaDB — ERP IXC (somente leitura) |
-| Infra | Docker + Docker Compose |
+| Processo | systemd (produção) |
 
-## Como funciona
-
-O consultor informa o ID do contrato. O sistema busca os dados no ERP, calcula a comissão conforme o tipo e salva o registro com histórico.
+## Regras de negócio — BDR
 
 | Tipo | Cálculo |
 |---|---|
@@ -32,7 +44,7 @@ O consultor informa o ID do contrato. O sistema busca os dados no ERP, calcula a
 ## Estrutura de diretórios
 
 ```
-bdr-commission/
+canaã-performance/
 ├── backend/
 │   ├── prisma/
 │   │   └── schema.prisma
@@ -62,7 +74,7 @@ bdr-commission/
 
 ## Configuração
 
-### 1. Variáveis de ambiente
+### Variáveis de ambiente
 
 Copie o `.env.example` e preencha com os dados do servidor IXC:
 
@@ -74,9 +86,9 @@ MYSQL_PASSWORD=senha_readonly
 MYSQL_DATABASE=nome_do_banco
 ```
 
-O PostgreSQL sobe automaticamente via Docker Compose.
+O PostgreSQL é configurado separadamente via `DATABASE_URL` no mesmo arquivo.
 
-### 2. Adaptando a query do ERP
+### Adaptando a query do ERP
 
 Se necessário, ajuste a query em `backend/src/modules/bdr/bdr.repository.ts` conforme o schema real do IXC:
 
@@ -91,24 +103,23 @@ WHERE cc.id = ?
   AND cc.status = 'A'
 ```
 
-### 3. Lista de consultores
+### Lista de consultores
 
 Edite `backend/src/config/consultants.ts` com os nomes da equipe.
 
-## Rodando com Docker
+## Rodando em produção (systemd)
+
+O sistema roda como serviço gerenciado pelo systemd.
 
 ```bash
-# Subir todos os serviços
-docker compose up --build -d
+# Ver status do serviço
+sudo systemctl status canaa-performance
 
-# Acessar
-http://localhost
+# Reiniciar após deploy
+sudo systemctl restart canaa-performance
 
-# Logs
-docker compose logs -f backend
-
-# Parar
-docker compose down
+# Ver logs em tempo real
+sudo journalctl -u canaa-performance -f
 ```
 
 ## Rodando localmente
@@ -141,9 +152,9 @@ npm run dev
 | GET | /api/v1/bdr/commissions | Histórico de comissões |
 | GET | /health | Health check |
 
-## Escalabilidade
+## Arquitetura modular
 
-O projeto usa arquitetura modular em camadas. Para adicionar um novo módulo (ex: Vendas) basta criar a pasta e registrar a rota — sem tocar no que já existe:
+O backend segue o padrão Controller → Service → Repository por módulo. Para adicionar uma nova equipe (ex: Vendas), basta criar o módulo e registrar a rota — sem alterar o que já existe:
 
 ```
 src/modules/
