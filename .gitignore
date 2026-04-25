@@ -1,0 +1,23 @@
+node_modules/
+dist/
+.env
+*.local
+
+# Logs
+*.log
+logs/
+
+# Uploads de arquivos reais
+backend/uploads/
+
+# Cache e build
+frontend/dist/
+backend/dist/
+__pycache__/
+*.pyc
+
+# Configurações locais
+.claude/
+
+# Arquivos de teste gerados
+test_result.txt

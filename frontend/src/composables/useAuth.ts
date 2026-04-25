@@ -1,0 +1,52 @@
+import { ref, computed } from 'vue';
+import axios from 'axios';
+
+interface AuthUser {
+  id: string;
+  nome: string;
+  email: string;
+  id_grupo: number;
+  perfil: 'consultor' | 'gestor' | 'cs';
+}
+
+const TOKEN_KEY = 'bdr_token';
+
+const user = ref<AuthUser | null>(null);
+
+function parseJwt(token: string): AuthUser | null {
+  try {
+    const payload = token.split('.')[1];
+    return JSON.parse(atob(payload));
+  } catch {
+    return null;
+  }
+}
+
+function init() {
+  const token = localStorage.getItem(TOKEN_KEY);
+  if (token) user.value = parseJwt(token);
+}
+
+init();
+
+const HUB_ADMIN_IDS = ['349', '167'];
+
+export function useAuth() {
+  const isAuthenticated = computed(() => !!user.value);
+  const isGestor        = computed(() => user.value?.perfil === 'gestor');
+  const isCS            = computed(() => user.value?.perfil === 'cs');
+  const isHubAdmin      = computed(() => !!user.value && HUB_ADMIN_IDS.includes(String(user.value.id)));
+
+  async function login(email: string, password: string) {
+    const { data } = await axios.post('/bdr/api/v1/auth/login', { email, password });
+    localStorage.setItem(TOKEN_KEY, data.token);
+    user.value = parseJwt(data.token);
+  }
+
+  function logout() {
+    localStorage.removeItem(TOKEN_KEY);
+    user.value = null;
+  }
+
+  return { user, isAuthenticated, isGestor, isCS, isHubAdmin, login, logout };
+}

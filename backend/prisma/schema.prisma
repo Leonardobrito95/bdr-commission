@@ -1,0 +1,240 @@
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["multiSchema"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+  schemas  = ["bdr", "hub", "comissao"]
+}
+
+model Commission {
+  id              String   @id @default(uuid())
+  id_contrato     String
+  nome_cliente    String
+  vendedor        String
+  tipo_negociacao TipoNegociacao
+  plano_atual     String?
+  plano_novo      String?
+  valor_atual     Decimal  @db.Decimal(10, 2)
+  valor_novo      Decimal? @db.Decimal(10, 2)
+  valor_comissao  Decimal  @db.Decimal(10, 2)
+  criado_por      String?
+  data_registro   DateTime @default(now())
+
+  @@map("commissions")
+  @@schema("bdr")
+}
+
+enum TipoNegociacao {
+  Upgrade
+  Downgrade
+  Refidelizacao
+
+  @@schema("bdr")
+}
+
+model Adjustment {
+  id             String    @id @default(uuid())
+  vendedor       String
+  descricao      String
+  valor          Decimal   @db.Decimal(10, 2)
+  registrado_por String
+  data_registro  DateTime  @default(now())
+  deletado_por   String?
+  deletado_em    DateTime?
+
+  @@map("adjustments")
+  @@schema("bdr")
+}
+
+/// Snapshot mensal de comissões de Vendas — gerado todo dia 19 para o mês anterior.
+/// Uma vez salvo, o registro não é alterado pelo IXC; reflete o estado no momento do fechamento.
+model VendasSnapshot {
+  id               String   @id @default(uuid())
+  /// Mês de referência no formato "YYYY-MM" (ex: "2025-03" = março de 2025)
+  mes_referencia   String
+  id_contrato      String
+  nome_cliente     String
+  nome_vendedor    String
+  plano            String
+  segmento         String
+  tipo_venda       String
+  valor_mensal     Decimal  @db.Decimal(10, 2)
+  percentual       Decimal  @db.Decimal(5, 4)
+  valor_comissao   Decimal  @db.Decimal(10, 2)
+  status_comissao  String
+  motivo_bloqueio  String?
+  assinatura       String
+  /// Marcado como true quando o gestor clica em "Enviar para pagamento"
+  enviado_pagamento Boolean  @default(false)
+  data_envio        DateTime?
+  enviado_por       String?
+  data_snapshot     DateTime @default(now())
+
+  @@unique([mes_referencia, id_contrato])
+  @@map("vendas_snapshots")
+  @@schema("bdr")
+}
+
+// =============================================================================
+// COMISSAO MODULE — Auditoria de comissão de campo (terceirizadas)
+// =============================================================================
+
+/// Tabela de empresas terceirizadas com tabela de preços por tipo de serviço.
+model ComissaoCampoEmpresa {
+  company_key String   @id
+  nome        String
+  precos_json Json     @default("{}")
+  created_at  DateTime @default(now())
+  updated_at  DateTime @updatedAt
+
+  @@map("empresas")
+  @@schema("comissao")
+}
+
+/// Resultado de auditoria salva por empresa (um registro por empresa, sobrescrito a cada auditoria).
+model ComissaoCampoAuditoria {
+  company_key  String    @id
+  company_name String
+  date_ini     DateTime?
+  date_fim     DateTime?
+  source       String    @default("database")
+  summary_json Json      @default("{}")
+  results_json Json      @default("[]")
+  created_at   DateTime  @default(now())
+  updated_at   DateTime  @updatedAt
+
+  @@map("auditorias_salvas")
+  @@schema("comissao")
+}
+
+// =============================================================================
+// HUB MODULE — Portal analítico de roteamento de dashboards
+// =============================================================================
+
+model HubSector {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  slug        String   @unique
+  icon        String   @default("fa-chart-bar")
+  color       String   @default("#002F4D")
+  description String?
+  is_active   Boolean  @default(true)
+  created_at  DateTime @default(now())
+
+  dashboards       HubDashboard[]
+  sharedDashboards HubDashboardSharedSector[]
+  userAccess       HubUserAccess[]
+
+  @@map("sectors")
+  @@schema("hub")
+}
+
+model HubDashboard {
+  id                String    @id @default(uuid())
+  title             String
+  description       String?
+  type              String    // 'internal' | 'powerbi' | 'link'
+  url               String
+  status            String    @default("active") // 'active' | 'maintenance' | 'error' | 'archived'
+  embed_mode        String    @default("newtab")  // 'newtab' | 'iframe'
+  thumbnail_url     String?
+  business_rules    String?
+  data_sources      String?
+  owner_tech        String?
+  refresh_frequency String?
+  last_update       DateTime?
+  sector_id         String?
+  created_at        DateTime  @default(now())
+
+  sector        HubSector?                 @relation(fields: [sector_id], references: [id])
+  sharedSectors HubDashboardSharedSector[]
+  userAccess    HubUserAccess[]
+  accessLogs    HubAccessLog[]
+
+  @@map("dashboards")
+  @@schema("hub")
+}
+
+model HubDashboardSharedSector {
+  dashboard_id String
+  sector_id    String
+
+  dashboard HubDashboard @relation(fields: [dashboard_id], references: [id], onDelete: Cascade)
+  sector    HubSector    @relation(fields: [sector_id], references: [id], onDelete: Cascade)
+
+  @@id([dashboard_id, sector_id])
+  @@map("dashboard_shared_sectors")
+  @@schema("hub")
+}
+
+/// Permissões de acesso ao Hub por usuário IXC.
+/// Um registro pode apontar para um setor (acesso a todos os dashboards do setor)
+/// ou para um dashboard específico (acesso individual).
+model HubUserAccess {
+  id            String    @id @default(uuid())
+  ixc_user_id   String
+  ixc_user_nome String
+  sector_id     String?
+  dashboard_id  String?
+  created_at    DateTime  @default(now())
+  created_by    String    // IXC user ID de quem concedeu
+
+  sector    HubSector?    @relation(fields: [sector_id], references: [id], onDelete: Cascade)
+  dashboard HubDashboard? @relation(fields: [dashboard_id], references: [id], onDelete: Cascade)
+
+  @@map("user_access")
+  @@schema("hub")
+}
+
+/// Log de auditoria do Hub — registra visualizações e ações administrativas.
+model HubAccessLog {
+  id           String   @id @default(uuid())
+  ixc_user_id  String
+  ixc_username String
+  action       String   // 'VIEW_DASHBOARD' | 'LOGIN' | 'CREATE_SECTOR' | 'UPDATE_DASHBOARD' etc.
+  detail       String?
+  ip_address   String?
+  created_at   DateTime @default(now())
+
+  dashboard_id String?
+  dashboard    HubDashboard? @relation(fields: [dashboard_id], references: [id], onDelete: SetNull)
+
+  @@map("access_logs")
+  @@schema("hub")
+}
+
+// =============================================================================
+
+/// Rastreamento de envio do relatório de comissão mensal (comercial e financeiro).
+model ComissaoEnvioLog {
+  id             String   @id @default(uuid())
+  mes_referencia String
+  tipo_envio     String   // "COMERCIAL" | "FINANCEIRO"
+  enviado_em     DateTime @default(now())
+  enviado_por    String
+
+  @@unique([mes_referencia, tipo_envio])
+  @@map("comissao_envio_logs")
+  @@schema("bdr")
+}
+
+/// Controle de alertas disparados por email — evita reenvio no mesmo período.
+model AlertaEnviado {
+  id             String   @id @default(uuid())
+  /// Tipo: ASSINATURA_PENDENTE | FATURA_NAO_QUITADA | RETENCAO_META | RETENCAO_FIM_MES
+  tipo           String
+  /// id_contrato (vendas) ou nome_operador (retenção)
+  referencia     String
+  /// Mês de referência no formato "YYYY-MM"
+  mes_referencia String
+  /// Nível da meta atingida: '70' | '90' | '110' (somente para RETENCAO_META). Vazio nos demais.
+  meta_nivel     String   @default("")
+  enviado_em     DateTime @default(now())
+
+  @@unique([tipo, referencia, mes_referencia, meta_nivel])
+  @@map("alertas_enviados")
+  @@schema("bdr")
+}

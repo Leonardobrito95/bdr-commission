@@ -1,0 +1,60 @@
+version: '3.9'
+
+services:
+  # ── PostgreSQL (banco próprio — escrita) ──────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: bdr_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: bdr_commission
+      POSTGRES_USER: bdr_user
+      POSTGRES_PASSWORD: bdr_password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    # porta não exposta ao host — acesso só interno ao docker (evita conflito com PostgreSQL nativo)
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bdr_user -d bdr_commission"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Backend (Node.js + Express + Prisma) ─────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: bdr_backend
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file:
+      - ./backend/.env
+    environment:
+      DATABASE_URL: postgresql://bdr_user:bdr_password@postgres:5432/bdr_commission
+      MYSQL_HOST: ${MYSQL_HOST}
+      MYSQL_PORT: ${MYSQL_PORT:-3306}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      PORT: 3000
+      NODE_ENV: production
+    # porta não exposta ao host — acesso via nginx interno do frontend docker
+    # ports:
+    #   - "3000:3000"
+
+  # ── Frontend (Vue.js + Vite + Nginx) ─────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: bdr_frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "8090:80"   # Hub Nginx vai fazer proxy desta porta
+
+volumes:
+  postgres_data:
