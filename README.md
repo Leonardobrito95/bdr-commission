@@ -1,4 +1,4 @@
-# BDR Commission
+# Canaã Performance
 
 Sistema web para registro de comissões da equipes de vendas e retenção(comercial), e terceiras de campo(instalação).
 
